@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -25,14 +26,20 @@ import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestClient;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 import com.suspiciouslions.backend.domain.ai.client.AiWorkerClient;
+import com.suspiciouslions.backend.domain.ai.client.RestAiWorkerClient;
 import com.suspiciouslions.backend.domain.ai.dto.AiAnalysisRequest;
+import com.suspiciouslions.backend.domain.ai.dto.AiAnalysisRequest.AnalysisMessage;
+import com.suspiciouslions.backend.domain.ai.dto.AiAnalysisRequest.Participant;
 import com.suspiciouslions.backend.domain.ai.dto.AiAnalysisRequest.ParticipantKey;
 import com.suspiciouslions.backend.domain.ai.dto.AiAnalysisResponse;
 import com.suspiciouslions.backend.domain.ai.dto.AiAnalysisResponse.AnalysisStatus;
@@ -63,6 +70,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 @SpringBootTest
 @Testcontainers
@@ -221,6 +230,85 @@ class AiWorkerIntegrationTests {
 		assertFalse(saved.isShouldShow());
 		assertNull(saved.getStateText());
 		assertEquals(List.of(message.getId()), saved.getTriggerMessageIds());
+	}
+
+	@Test
+	void actualStableCompletedHttpResponseSavesTwoEmotionsAndNoAiResults() {
+		TestContext context = createTestContext();
+		UUID requestId = UUID.fromString("60b96a75-5e80-50e9-a2da-5bab5c173da5");
+		AiAnalysisRequest request = new AiAnalysisRequest(
+				requestId,
+				context.chatRoom().getId(),
+				List.of(new Participant(ParticipantKey.USER_A), new Participant(ParticipantKey.USER_B)),
+				List.of(
+						new AnalysisMessage(105L, ParticipantKey.USER_A, "메시지 105", now()),
+						new AnalysisMessage(106L, ParticipantKey.USER_B, "메시지 106", now()),
+						new AnalysisMessage(107L, ParticipantKey.USER_A, "메시지 107", now()),
+						new AnalysisMessage(108L, ParticipantKey.USER_B, "메시지 108", now())),
+				List.of()
+		);
+
+		RestClient.Builder builder = RestClient.builder().baseUrl("http://localhost:8000");
+		MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+		RestAiWorkerClient client = new RestAiWorkerClient(builder.build());
+		server.expect(requestTo("http://localhost:8000/internal/v1/chat-analyses"))
+				.andRespond(withSuccess("""
+						{
+						  "analysisRequestId": "60b96a75-5e80-50e9-a2da-5bab5c173da5",
+						  "status": "COMPLETED",
+						  "results": [],
+						  "emotionAnalyses": [
+						    {
+						      "subjectParticipant": "USER_A",
+						      "viewerParticipant": "USER_B",
+						      "emotionType": "STABLE",
+						      "intensityValue": 0.0,
+						      "shouldShow": true,
+						      "triggerMessageIds": [105, 107],
+						      "expiresAt": "2026-08-15T00:40:00+09:00",
+						      "stateText": "평온해요"
+						    },
+						    {
+						      "subjectParticipant": "USER_B",
+						      "viewerParticipant": "USER_A",
+						      "emotionType": "STABLE",
+						      "intensityValue": 0.0,
+						      "shouldShow": true,
+						      "triggerMessageIds": [106, 108],
+						      "expiresAt": "2026-08-15T00:40:00+09:00",
+						      "stateText": "평온해요"
+						    }
+						  ]
+						}
+						""", MediaType.APPLICATION_JSON));
+
+		AiAnalysisResponse response = client.analyze(request);
+		responseService.process(request, response);
+
+		server.verify();
+		assertEquals(0, aiResultRepository.count());
+		List<EmotionAnalysis> saved = emotionAnalysisRepository.findAll().stream()
+				.sorted(Comparator.comparing(emotion -> emotion.getSubjectUser().getId()))
+				.toList();
+		assertEquals(2, saved.size());
+
+		EmotionAnalysis userAEmotion = saved.get(0);
+		assertEquals(context.userA().getId(), userAEmotion.getSubjectUser().getId());
+		assertEquals(context.userB().getId(), userAEmotion.getViewerUser().getId());
+		assertEquals(EmotionType.STABLE, userAEmotion.getEmotionType());
+		assertEquals(0, userAEmotion.getIntensityValue().compareTo(BigDecimal.ZERO));
+		assertTrue(userAEmotion.isShouldShow());
+		assertEquals(List.of(105L, 107L), userAEmotion.getTriggerMessageIds());
+		assertEquals("평온해요", userAEmotion.getStateText());
+
+		EmotionAnalysis userBEmotion = saved.get(1);
+		assertEquals(context.userB().getId(), userBEmotion.getSubjectUser().getId());
+		assertEquals(context.userA().getId(), userBEmotion.getViewerUser().getId());
+		assertEquals(EmotionType.STABLE, userBEmotion.getEmotionType());
+		assertEquals(0, userBEmotion.getIntensityValue().compareTo(BigDecimal.ZERO));
+		assertTrue(userBEmotion.isShouldShow());
+		assertEquals(List.of(106L, 108L), userBEmotion.getTriggerMessageIds());
+		assertEquals("평온해요", userBEmotion.getStateText());
 	}
 
 	@Test
