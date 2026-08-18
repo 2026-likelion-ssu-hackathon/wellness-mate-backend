@@ -1,6 +1,19 @@
 spring:
   application:
     name: backend
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/wellness_mate}
+    username: ${SPRING_DATASOURCE_USERNAME:wellness_mate}
+    password: ${SPRING_DATASOURCE_PASSWORD:wellness_mate_local_password}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  jpa:
+    hibernate:
+      ddl-auto: validate
+  sql:
+    init:
+      mode: never
 
 server:
   port: ${PORT:8080}
