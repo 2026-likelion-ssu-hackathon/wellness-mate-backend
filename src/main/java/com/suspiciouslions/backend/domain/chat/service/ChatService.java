@@ -5,6 +5,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
@@ -14,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
+import com.suspiciouslions.backend.domain.ai.event.MessageCreatedEvent;
 import com.suspiciouslions.backend.domain.chat.dto.ChatRoomResponse;
 import com.suspiciouslions.backend.domain.chat.dto.ChatRoomResponse.PartnerResponse;
 import com.suspiciouslions.backend.domain.chat.dto.MessageResponse;
@@ -32,13 +34,16 @@ public class ChatService {
 	private final ChatRoomRepository chatRoomRepository;
 	private final MessageRepository messageRepository;
 	private final TransactionTemplate transactionTemplate;
+	private final ApplicationEventPublisher eventPublisher;
 
 	public ChatService(UserRepository userRepository, ChatRoomRepository chatRoomRepository,
-			MessageRepository messageRepository, PlatformTransactionManager transactionManager) {
+			MessageRepository messageRepository, PlatformTransactionManager transactionManager,
+			ApplicationEventPublisher eventPublisher) {
 		this.userRepository = userRepository;
 		this.chatRoomRepository = chatRoomRepository;
 		this.messageRepository = messageRepository;
 		this.transactionTemplate = new TransactionTemplate(transactionManager);
+		this.eventPublisher = eventPublisher;
 	}
 
 	@Transactional(readOnly = true)
@@ -95,13 +100,17 @@ public class ChatService {
 
 	private MessageResponse saveMessageIdempotently(ChatRoom chatRoom, User sender, SendMessageRequest request) {
 		try {
-			Message saved = transactionTemplate.execute(status -> messageRepository.saveAndFlush(new Message(
-					chatRoom,
-					sender,
-					request.clientMessageId(),
-					request.content(),
-					request.sentAt()
-			)));
+			Message saved = transactionTemplate.execute(status -> {
+				Message newMessage = messageRepository.saveAndFlush(new Message(
+						chatRoom,
+						sender,
+						request.clientMessageId(),
+						request.content(),
+						request.sentAt()
+				));
+				eventPublisher.publishEvent(new MessageCreatedEvent(newMessage.getId(), chatRoom.getId()));
+				return newMessage;
+			});
 			return toResponse(Objects.requireNonNull(saved));
 		} catch (DataIntegrityViolationException exception) {
 			return messageRepository.findBySenderIdAndClientMessageId(sender.getId(), request.clientMessageId())
