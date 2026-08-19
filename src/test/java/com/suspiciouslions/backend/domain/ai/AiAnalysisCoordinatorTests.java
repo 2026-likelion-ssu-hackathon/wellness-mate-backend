@@ -18,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 class AiAnalysisCoordinatorTests {
 
@@ -27,6 +28,16 @@ class AiAnalysisCoordinatorTests {
 	void shutdownExecutor() throws InterruptedException {
 		executor.shutdownNow();
 		assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
+	}
+
+	@Test
+	void idleRoomSubmitsItsFirstRequestImmediately() {
+		AiAnalysisService analysisService = mock(AiAnalysisService.class);
+		AiAnalysisCoordinator coordinator = new AiAnalysisCoordinator(analysisService, Runnable::run);
+
+		coordinator.submit(new MessageCreatedEvent(1L, 10L));
+
+		verify(analysisService).analyze(10L, 1L);
 	}
 
 	@Test

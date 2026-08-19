@@ -2,6 +2,7 @@ package com.suspiciouslions.backend.domain.ai.service;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -32,22 +33,24 @@ public class AiAnalysisCoordinator {
 		roomStates.compute(event.chatRoomId(), (chatRoomId, state) -> {
 			if (state == null) {
 				shouldStart.set(true);
-				return new RoomAnalysisState(event);
+				return new RoomAnalysisState(event, System.nanoTime());
 			}
 
-			MessageCreatedEvent replaced = state.pending;
-			state.pending = event;
+			ScheduledAnalysis replaced = state.pending;
+			state.pending = new ScheduledAnalysis(event, System.nanoTime());
 			if (replaced == null) {
 				log.info("AI analysis queued as latest pending request. chatRoomId={}, messageId={}",
 						event.chatRoomId(), event.messageId());
 			} else {
 				log.info("AI analysis pending request coalesced. chatRoomId={}, discardedMessageId={}, latestMessageId={}",
-						event.chatRoomId(), replaced.messageId(), event.messageId());
+						event.chatRoomId(), replaced.event().messageId(), event.messageId());
 			}
 			return state;
 		});
 
 		if (shouldStart.get()) {
+			log.info("AI analysis scheduled immediately. chatRoomId={}, messageId={}",
+					event.chatRoomId(), event.messageId());
 			aiWorkerExecutor.execute(() -> drain(event.chatRoomId()));
 		}
 	}
@@ -59,15 +62,18 @@ public class AiAnalysisCoordinator {
 				return;
 			}
 
-			MessageCreatedEvent current = state.current;
+			ScheduledAnalysis current = state.current;
+			long executorWaitMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - current.scheduledAtNanos());
+			log.info("AI analysis executor task started. chatRoomId={}, messageId={}, executorWaitMillis={}",
+					current.event().chatRoomId(), current.event().messageId(), executorWaitMillis);
 			try {
-				aiAnalysisService.analyze(current.chatRoomId(), current.messageId());
+				aiAnalysisService.analyze(current.event().chatRoomId(), current.event().messageId());
 			} catch (RuntimeException exception) {
 				log.warn("Unexpected AI analysis failure; continuing with the latest pending request. "
-						+ "chatRoomId={}, messageId={}", current.chatRoomId(), current.messageId(), exception);
+						+ "chatRoomId={}, messageId={}", current.event().chatRoomId(), current.event().messageId(), exception);
 			}
 
-			AtomicReference<MessageCreatedEvent> next = new AtomicReference<>();
+			AtomicReference<ScheduledAnalysis> next = new AtomicReference<>();
 			roomStates.compute(chatRoomId, (key, latestState) -> {
 				if (latestState == null || latestState.pending == null) {
 					return null;
@@ -86,11 +92,14 @@ public class AiAnalysisCoordinator {
 
 	private static final class RoomAnalysisState {
 
-		private MessageCreatedEvent current;
-		private MessageCreatedEvent pending;
+		private ScheduledAnalysis current;
+		private ScheduledAnalysis pending;
 
-		private RoomAnalysisState(MessageCreatedEvent current) {
-			this.current = current;
+		private RoomAnalysisState(MessageCreatedEvent current, long scheduledAtNanos) {
+			this.current = new ScheduledAnalysis(current, scheduledAtNanos);
 		}
+	}
+
+	private record ScheduledAnalysis(MessageCreatedEvent event, long scheduledAtNanos) {
 	}
 }
