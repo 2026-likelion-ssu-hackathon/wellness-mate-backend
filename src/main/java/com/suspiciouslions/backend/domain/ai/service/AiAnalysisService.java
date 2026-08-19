@@ -1,5 +1,7 @@
 package com.suspiciouslions.backend.domain.ai.service;
 
+import java.util.concurrent.TimeUnit;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -25,17 +27,31 @@ public class AiAnalysisService {
 	}
 
 	public void analyze(Long chatRoomId, Long messageId) {
+		long analysisStartedAtNanos = System.nanoTime();
 		try {
 			AiAnalysisRequest request = requestService.create(chatRoomId);
-			log.info("AI analysis started. chatRoomId={}, messageId={}, analysisRequestId={}",
-					chatRoomId, messageId, request.analysisRequestId());
+			long requestPreparedAtNanos = System.nanoTime();
+			log.info("AI worker request started. chatRoomId={}, messageId={}, analysisRequestId={}, requestBuildMillis={}",
+					chatRoomId, messageId, request.analysisRequestId(),
+					elapsedMillis(analysisStartedAtNanos, requestPreparedAtNanos));
 			AiAnalysisResponse response = aiWorkerClient.analyze(request);
+			long workerRespondedAtNanos = System.nanoTime();
+			log.info("AI worker response received. chatRoomId={}, messageId={}, analysisRequestId={}, workerCallMillis={}",
+					chatRoomId, messageId, request.analysisRequestId(),
+					elapsedMillis(requestPreparedAtNanos, workerRespondedAtNanos));
 			responseService.process(request, response);
-			log.info("AI analysis completed. chatRoomId={}, messageId={}, analysisRequestId={}, status={}",
-					chatRoomId, messageId, request.analysisRequestId(), response.status());
+			long persistenceCompletedAtNanos = System.nanoTime();
+			log.info("AI analysis completed. chatRoomId={}, messageId={}, analysisRequestId={}, status={}, persistenceMillis={}, totalMillis={}",
+					chatRoomId, messageId, request.analysisRequestId(), response.status(),
+					elapsedMillis(workerRespondedAtNanos, persistenceCompletedAtNanos),
+					elapsedMillis(analysisStartedAtNanos, persistenceCompletedAtNanos));
 		} catch (RuntimeException exception) {
 			log.warn("AI analysis failed without affecting the saved message. chatRoomId={}, messageId={}",
 					chatRoomId, messageId, exception);
 		}
+	}
+
+	private long elapsedMillis(long startedAtNanos, long endedAtNanos) {
+		return TimeUnit.NANOSECONDS.toMillis(endedAtNanos - startedAtNanos);
 	}
 }
