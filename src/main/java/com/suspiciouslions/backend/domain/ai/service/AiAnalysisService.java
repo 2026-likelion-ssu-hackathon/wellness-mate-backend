@@ -27,8 +27,12 @@ public class AiAnalysisService {
 	public void analyze(Long chatRoomId, Long messageId) {
 		try {
 			AiAnalysisRequest request = requestService.create(chatRoomId);
+			log.info("AI analysis started. chatRoomId={}, messageId={}, analysisRequestId={}",
+					chatRoomId, messageId, request.analysisRequestId());
 			AiAnalysisResponse response = aiWorkerClient.analyze(request);
 			responseService.process(request, response);
+			log.info("AI analysis completed. chatRoomId={}, messageId={}, analysisRequestId={}, status={}",
+					chatRoomId, messageId, request.analysisRequestId(), response.status());
 		} catch (RuntimeException exception) {
 			log.warn("AI analysis failed without affecting the saved message. chatRoomId={}, messageId={}",
 					chatRoomId, messageId, exception);
