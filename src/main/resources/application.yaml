@@ -20,7 +20,7 @@ server:
 
 app:
   cors:
-    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173}
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173,https://momote-frontend.vercel.app,https://www.momote.site,https://momote.site}
   ai-worker:
     base-url: ${AI_WORKER_BASE_URL:http://localhost:8000}
     timeout: 30s
