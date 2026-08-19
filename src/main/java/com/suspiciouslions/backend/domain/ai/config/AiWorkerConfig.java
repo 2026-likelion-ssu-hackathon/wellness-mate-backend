@@ -30,7 +30,7 @@ public class AiWorkerConfig {
 	@Bean(name = "aiWorkerExecutor")
 	Executor aiWorkerExecutor() {
 		ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-		executor.setCorePoolSize(1);
+		executor.setCorePoolSize(4);
 		executor.setMaxPoolSize(4);
 		executor.setQueueCapacity(100);
 		executor.setThreadNamePrefix("ai-worker-");
